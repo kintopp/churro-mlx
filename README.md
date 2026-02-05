@@ -303,7 +303,9 @@ If you use Churro in your research, please cite the original paper:
 
 ## Acknowledgments
 
-This MLX implementation is based on the original Churro model developed by the Stanford OVAL lab. Special thanks to the Churro team for their groundbreaking work on historical document OCR.
+Forked from [aiamblichus/churro-mlx](https://github.com/aiamblichus/churro-mlx), the original MLX port. This fork upgrades to 8-bit quantization, aligns inference settings with the official Churro implementation, and adds documentation from the research paper.
+
+Based on the [Churro model](https://github.com/stanford-oval/Churro) developed by the Stanford OVAL lab.
 
 ---
 
