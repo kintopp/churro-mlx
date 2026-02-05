@@ -31,4 +31,4 @@ seshat.txt
 docs/_build/
 /build
 
-mlx_churro_4bit/
+mlx_churro_*/

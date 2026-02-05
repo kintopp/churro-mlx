@@ -12,7 +12,7 @@ from rich.syntax import Syntax
 app = typer.Typer()
 
 # Configuration constants from the original implementation
-DEFAULT_MODEL_PATH = "mlx_churro_4bit"  # Points to the converted weights
+DEFAULT_MODEL_PATH = "mlx_churro_8bit"  # Points to the converted weights
 DEFAULT_SYSTEM_MESSAGE = (
     "Transcribe the entiretly of this historical documents to XML format."
 )
@@ -75,10 +75,7 @@ def run_inference(
         {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
         {
             "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": "Transcribe this."},
-            ],
+            "content": [{"type": "image"}],
         },
     ]
 
@@ -99,6 +96,7 @@ def run_inference(
         max_tokens=max_tokens,
         verbose=False,  # We handle printing manually
         temp=temperature,
+        repetition_penalty=1.05,
     )
 
     # 6. Output
@@ -127,7 +125,7 @@ def main(
         help="Path to MLX converted model directory",
     ),
     max_tokens: int = typer.Option(
-        2000, "--max-tokens", help="Max tokens to generate (increase for dense pages)"
+        20000, "--max-tokens", help="Max tokens to generate (increase for dense pages)"
     ),
     temp: float = typer.Option(
         0.6, "--temp", "-t", help="Sampling temperature (0.0 for deterministic)"

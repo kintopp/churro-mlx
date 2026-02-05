@@ -24,7 +24,7 @@ According to the [research paper](https://arxiv.org/abs/2509.19768), Churro achi
 - 🌍 **Multilingual Support** - Handles 46 language clusters including historical variants and dead languages
 - 📝 **XML Output** - Produces structured HistoricalDocument XML format
 - 🎨 **Pretty Printing** - Optional syntax-highlighted output using Rich
-- ⚡ **4-bit Quantization** - Efficient model size with minimal accuracy loss
+- ⚡ **8-bit Quantization** - Efficient model size with near-lossless accuracy
 
 ## Installation
 
@@ -55,12 +55,12 @@ Before first use, you need to convert the Churro model to MLX format. This requi
 ```bash
 uv run python -m mlx_vlm.convert \
   --hf-path stanford-oval/churro-3B \
-  --mlx-path mlx_churro_4bit \
+  --mlx-path mlx_churro_8bit \
   -q \
-  --q-bits 4
+  --q-bits 8
 ```
 
-This will download the model from HuggingFace and convert it to a 4-bit quantized MLX format, saving it to the `mlx_churro_4bit` directory.
+This will download the model from HuggingFace and convert it to an 8-bit quantized MLX format, saving it to the `mlx_churro_8bit` directory.
 
 ## Usage
 
@@ -82,9 +82,9 @@ Arguments:
 
 Options:
   -m, --model PATH         Path to MLX converted model directory
-                           [default: mlx_churro_4bit]
+                           [default: mlx_churro_8bit]
   --max-tokens INTEGER     Max tokens to generate (increase for dense pages)
-                           [default: 2000]
+                           [default: 20000]
   -t, --temp FLOAT         Sampling temperature (0.0 for deterministic)
                            [default: 0.6]
   -v, --verbose            Print status messages to stderr
@@ -122,9 +122,40 @@ uv run python churro_cli.py document.jpg \
 uv run python churro_cli.py document.jpg --model /path/to/custom/model
 ```
 
+## Inference Settings
+
+These defaults match the [official Churro inference script](https://github.com/stanford-oval/Churro/blob/main/churro_transformers_infer.py) and the model's [`generation_config.json`](https://huggingface.co/stanford-oval/churro-3B/blob/main/generation_config.json).
+
+### Prompt
+
+Churro uses a **single, universal prompt** for all document types. There is no per-language, per-script, or per-era variation -- the model learned to handle all of these from training data alone.
+
+- **System message**: `"Transcribe the entiretly of this historical documents to XML format."`
+- **User message**: The image only, with no additional text.
+
+> **Note:** The typos in the system message ("entiretly", "documents") are intentional. The model was fine-tuned with this exact string, so changing it may degrade performance.
+
+### Generation Parameters
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `temperature` | 0.6 | Balances accuracy with diversity; use 0.0 for deterministic output |
+| `repetition_penalty` | 1.05 | Prevents "repetitive degeneration" (the model looping on the same lines) |
+| `max_tokens` | 20,000 | Dense pages (newspapers, ledgers) can need 4000-6000+ tokens |
+
+### Image Preprocessing
+
+| Setting | Value |
+|---------|-------|
+| Max dimension | 2500 px (longest side, aspect ratio preserved) |
+| Resize method | LANCZOS downsampling |
+| Color mode | RGB |
+| Processor min pixels | 512 x 28 x 28 (401,408 px) |
+| Processor max pixels | 5120 x 28 x 28 (4,014,080 px) |
+
 ## Output Format
 
-By default, Churro outputs transcriptions in **HistoricalDocument XML** format, a structured schema designed to capture complex layouts, scribal edits, and missing text while preserving reading order.
+Churro outputs transcriptions in **HistoricalDocument XML**, a structured schema ([`historical_doc.xsd`](https://github.com/stanford-oval/Churro/blob/main/evaluation/historical_doc.xsd)) designed to capture complex layouts, scribal edits, and missing text while preserving reading order.
 
 ### Example Output
 
@@ -154,26 +185,96 @@ By default, Churro outputs transcriptions in **HistoricalDocument XML** format, 
 
 The `--pretty` flag enables syntax-highlighted XML output with line numbers for better readability.
 
+### XML Schema Elements
+
+**Document structure:**
+`HistoricalDocument` > `Metadata` + `Page` > `Header` / `Body` / `Footer`
+
+**Metadata:** `Language`, `Script`, `WritingDirection` (ltr / rtl / ttb-ltr / ttb-rtl), `PhysicalDescription`, `Description`, `TranscriptionNote`
+
+**Body-level elements:**
+
+| Element | Purpose |
+|---------|---------|
+| `Paragraph` | Standard text block, contains `Line` elements |
+| `MarginalNote` | Margin annotations (placement: left/right/top/bottom) |
+| `Table` | Tabular data (`TableRow` > `TableCell` with colspan/rowspan) |
+| `Heading` | Section headings (type: main / sub / running_title / figure) |
+| `DateLine` | Date lines at the start of letters or entries |
+| `DatedEntry` | Diary-style dated entries |
+| `RecordEntry` | Log or record book entries |
+| `BlockQuotation` | Quoted text (type: prose / verse) |
+| `List` > `Item` | Ordered or unordered lists |
+| `Figure` | Illustrations with optional `Caption` and `Description` |
+| `Formula` | Mathematical/chemical formulas (LaTeX notation) |
+| `Gap` | Missing text (reason: illegible / missing / damaged / omitted) |
+
+**Inline markup (within `Line`):**
+
+| Element | Purpose |
+|---------|---------|
+| `Initial` | Decorated/drop capitals (type: simple / decorated / drop / decorated-drop) |
+| `Emphasis` | Styled text (type: italic / bold / underline / colored) |
+| `Illegible` | Unreadable spans (reason: faded / damaged / blot / scribbled / binding) |
+| `Deletion` | Struck-out text |
+| `Addition` | Scribal insertions |
+| `Above` | Superscript / above-line text |
+
+**Footer-specific:** `CatchWord`, `SignatureMark`, `FolioNumber`, `PageNumber`
+
 ## Model Details
 
-- **Base Model**: Qwen 2.5 VL (3B parameters)
-- **Quantization**: 4-bit
-- **Max Image Dimension**: 2500 pixels (images are automatically resized)
-- **Supported Scripts**: Latin, Cyrillic, Greek, Hebrew, Arabic, Devanagari, Bengali, Khmer, Japanese, Chinese, and more
+- **Base Model**: [Qwen 2.5 VL 3B Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct), fine-tuned on 97,151 training pages
+- **Quantization**: 8-bit (9.8 effective bits/weight; embeddings and norms kept at full precision)
+- **Disk size**: ~4.3 GB
+- **Supported scripts**: 14 scripts across 5 families -- Latin, Cyrillic, Greek, Hebrew, Arabic, Devanagari, Bengali, Khmer, Japanese, Chinese, and more
+
+### Accuracy by Document Type
+
+From the [research paper](https://arxiv.org/abs/2509.19768), measured as normalized Levenshtein similarity:
+
+**Printed documents** (82.3% overall):
+
+| Strongest | Score | Weakest | Score |
+|-----------|-------|---------|-------|
+| Slovenian | 97.6% | Chinese | 6.2% (only 6 training samples) |
+| Bulgarian | 96.1% | Sanskrit | 36.8% |
+| Czech | 95.6% | Hebrew | 59.3% |
+
+**Handwritten documents** (70.1% overall):
+
+| Strongest | Score | Weakest | Score |
+|-----------|-------|---------|-------|
+| Catalan | 90.2% | Sanskrit | 21.5% |
+| Italian | 88.4% | Khmer | 25.7% |
+| German | 83.1% | Hebrew | 42.3% |
+
+### Known Failure Modes
+
+The paper documents several failure modes to be aware of:
+
+- **Reading order errors in vertical scripts**: East Asian documents with top-to-bottom writing may have lines transcribed in the wrong order
+- **Small character recognition**: Very small text (e.g., footnotes, marginalia) can be misread
+- **Repetitive degeneration**: The model can get stuck repeating lines -- mitigated by `repetition_penalty: 1.05`
+- **Hallucinations from stereotypes**: Occasionally generates plausible but fabricated text for damaged/illegible sections
+- **Historical script changes**: Characters that changed form over centuries (e.g., long s "ſ" vs. "s") may be inconsistently transcribed
 
 ## Performance Tips
 
-1. **Dense Pages**: Increase `--max-tokens` (e.g., 4000-6000) for pages with a lot of text
-2. **Deterministic Output**: Use `--temp 0.0` for reproducible results
-3. **Large Images**: Images are automatically resized to fit within 2500×2500 pixels while preserving aspect ratio
-4. **GPU Acceleration**: MLX automatically uses Apple Silicon GPUs when available
+1. **Dense pages**: The default `--max-tokens 20000` handles most documents, but you can lower it for faster inference on short pages
+2. **Deterministic output**: Use `--temp 0.0` for reproducible results
+3. **Large images**: Images are automatically resized to fit within 2500x2500 pixels while preserving aspect ratio
+4. **GPU acceleration**: MLX automatically uses Apple Silicon GPUs when available
+5. **Quantization tradeoff**: 8-bit produces near-identical output to fp16 at 60% the memory; 4-bit saves more memory but introduces noticeable transcription differences
 
 ## Limitations
 
 - Currently optimized for Apple Silicon (M-series chips)
 - Model conversion required before first use
-- Best performance on documents from the training period (3rd century BC - 20th century)
-- Some languages may have lower accuracy if underrepresented in the training data
+- Best performance on documents from the 3rd century BC to the 20th century
+- Underrepresented languages (especially those with minimal training data) will have lower accuracy
+- No African languages are represented in the training data
+- Non-Latin scripts may have higher reading-order error rates
 
 ## Citation
 
